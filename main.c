@@ -1,9 +1,12 @@
 #include <stdint.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <time.h>
 #include <stdio.h>
 #include <string.h>
 #include <omp.h>
+
+#define PRIME 1039
 
 struct Graph {
 	uint64_t numNodes;
@@ -111,16 +114,18 @@ int InitGraph(struct Graph *g)
 	return 0;
 }
 
-struct Node* FindTarget(struct Node* n, struct Graph* g, double d_ratio)
+struct Node* FindTarget(struct Node* n, struct Graph* g, double d_ratio, struct drand48_data drandBuf)
 {
 	// 0.0 to 1.0
-	double coin = drand48();
+	double coin;
+	unsigned int seed = time(NULL);
+	drand48_r(&drandBuf, &coin);
 	int index = 0;
 	int index2 = 0;
 	if (coin <= d_ratio && n->numlinks != 0) {
 		//heads
-		index = rand() % n->numlinks;
-		index2 = rand() % n->numlinks+1;
+		index = rand_r(&seed) % n->numlinks;
+		index2 = rand_r(&seed) % n->numlinks+1;
 		if (index2 == index) return n;
 
 		return n->links[index];
@@ -135,7 +140,7 @@ double EstimatePageRank(struct Node* node, struct Graph* graph)
 	int i;
 	int sum = 0;
 	int numNodes = graph->numNodes;
-#pragma omp parallel for reduction(+:sum) private(i) shared(numNodes)
+#pragma omp parallel for schedule(static,32) reduction(+:sum) private(i) shared(numNodes)
 	for (i = 0; i < numNodes; i++) {
 		sum += graph->Nodes[i]->visited;
 	}
@@ -149,15 +154,19 @@ int PageRank(struct Graph *graph, int lenght, double d_ratio)
 {
 	int i, j;
 	int numNodes = graph->numNodes;
-#pragma omp parallel for schedule(static,1) collapse(2) private(j,i) shared(numNodes, lenght)
+	struct drand48_data drandBuf;
+	srand48_r(PRIME*omp_get_thread_num(), &drandBuf);
+
+#pragma omp parallel for schedule(static,32) collapse(2) private(j,i) shared(numNodes, lenght)
 	for (j = 0; j < numNodes; j++) {
 		for (i = 0; i < lenght; i++) {
 			struct Node *node = graph->Nodes[j];
 			#pragma omp atomic
 			node->visited++;
-			node = FindTarget(node, graph, d_ratio);
+			node = FindTarget(node, graph, d_ratio, drandBuf);
 		}
 	}
+#pragma omp parallel for schedule(static,32) private(j) shared(numNodes)
 	for (j = 0; j < numNodes; j++) {
 		double rank = EstimatePageRank(graph->Nodes[j], graph);
 		if (rank > 0) {
@@ -172,6 +181,7 @@ int main(int argc, char* argv[])
 	int K;
 	double D;
 	struct Graph *g = malloc(sizeof(struct Graph));
+	omp_set_num_threads(4);
 
 	if (argc != 3) {
 		printf("I take 2 parameters <K>: lenght of random walk, <D>: damping ratio\n");
