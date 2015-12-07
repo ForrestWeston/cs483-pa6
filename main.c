@@ -18,6 +18,7 @@ struct Node {
 	int Id;
 	int numlinks;
 	int visited;
+	int pagerank;
 	struct Node **links;
 };
 
@@ -28,6 +29,7 @@ struct Node* MakeNode(int id)
 	n->numlinks = 0;
 	n->links = NULL;
 	n->visited = 0;
+	n->pagerank = 0;
 	return n;
 }
 
@@ -36,6 +38,7 @@ void PrintNodeStat(struct Node *n)
 	printf("ID:\t\t%d\n", n->Id);
 	printf("numlinks:\t%d\n", n->numlinks);
 	printf("visited:\t%d\n", n->visited);
+	printf("pagerank:\t%d\n", n->pagerank);
 	putchar('\n');
 }
 
@@ -121,12 +124,9 @@ struct Node* FindTarget(struct Node* n, struct Graph* g, double d_ratio, struct 
 	unsigned int seed = time(NULL);
 	drand48_r(&drandBuf, &coin);
 	int index = 0;
-	int index2 = 0;
 	if (coin <= d_ratio && n->numlinks != 0) {
 		//heads
 		index = rand_r(&seed) % n->numlinks;
-		index2 = rand_r(&seed) % n->numlinks+1;
-		if (index2 == index) return n;
 
 		return n->links[index];
 	}
@@ -150,30 +150,52 @@ double EstimatePageRank(struct Node* node, struct Graph* graph)
 	return (node->visited/sum);
 }
 
-int PageRank(struct Graph *graph, int lenght, double d_ratio)
+int PageRank(struct Graph *graph, int length, double d_ratio)
 {
 	int i, j;
 	int numNodes = graph->numNodes;
+	int sum;
 	struct drand48_data drandBuf;
+	struct Node *node = NULL;
+
+#pragma omp parallel private(j,i, drandBuf, node) shared(numNodes, length)
+{
 	srand48_r(PRIME*omp_get_thread_num(), &drandBuf);
 
-#pragma omp parallel for schedule(static,32) collapse(2) private(j,i) shared(numNodes, lenght)
+#pragma omp for schedule(static,32)
 	for (j = 0; j < numNodes; j++) {
-		for (i = 0; i < lenght; i++) {
-			struct Node *node = graph->Nodes[j];
+		node = graph->Nodes[j];
+		for (i = 0; i < length; i++) {
 			#pragma omp atomic
 			node->visited++;
 			node = FindTarget(node, graph, d_ratio, drandBuf);
 		}
 	}
-#pragma omp parallel for schedule(static,32) private(j) shared(numNodes)
-	for (j = 0; j < numNodes; j++) {
-		double rank = EstimatePageRank(graph->Nodes[j], graph);
-		if (rank > 0) {
-			printf("Page ranke node %d: %lf\n", j, rank);
-		}
+}
+printf("Walking Complete\n");
+
+#pragma omp parallel private(i) shared(numNodes)
+{
+#pragma omp for schedule(static,32) reduction(+:sum)
+	for (i = 0; i < numNodes; i++) {
+		sum += graph->Nodes[i]->visited;
 	}
-	return 0;
+
+}
+
+printf("Summing Complete %d\n", sum);
+int pr;
+#pragma omp parallel for schedule(static,32) private(i)
+	for (i = 0; i < numNodes; i++) {
+		pr = (graph->Nodes[i]->visited)/(sum - graph->Nodes[i]->visited);
+		graph->Nodes[i]->pagerank = pr;
+		if(pr > 0)
+			PrintNodeStat(graph->Nodes[i]);
+	}
+
+printf("PageRank Complete\n");
+
+return 0;
 }
 
 int main(int argc, char* argv[])
