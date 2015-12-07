@@ -11,6 +11,8 @@
 struct Graph {
 	uint64_t numNodes;
 	uint64_t numEdges;
+	double WalkTime;
+	double EstimateTime;
 	struct Node **Nodes;
 };
 
@@ -18,7 +20,7 @@ struct Node {
 	int Id;
 	int numlinks;
 	int visited;
-	int pagerank;
+	double pagerank;
 	struct Node **links;
 };
 
@@ -29,7 +31,7 @@ struct Node* MakeNode(int id)
 	n->numlinks = 0;
 	n->links = NULL;
 	n->visited = 0;
-	n->pagerank = 0;
+	n->pagerank = 0.0;
 	return n;
 }
 
@@ -38,7 +40,7 @@ void PrintNodeStat(struct Node *n)
 	printf("ID:\t\t%d\n", n->Id);
 	printf("numlinks:\t%d\n", n->numlinks);
 	printf("visited:\t%d\n", n->visited);
-	printf("pagerank:\t%d\n", n->pagerank);
+	printf("pagerank:\t%lf\n", n->pagerank);
 	putchar('\n');
 }
 
@@ -153,16 +155,20 @@ double EstimatePageRank(struct Node* node, struct Graph* graph)
 int PageRank(struct Graph *graph, int length, double d_ratio)
 {
 	int i, j;
+	double start;
 	int numNodes = graph->numNodes;
 	int sum;
+	int chunkSize = graph->numNodes/4;
 	struct drand48_data drandBuf;
 	struct Node *node = NULL;
+
+	start =  omp_get_wtime();
 
 #pragma omp parallel private(j,i, drandBuf, node) shared(numNodes, length)
 {
 	srand48_r(PRIME*omp_get_thread_num(), &drandBuf);
 
-#pragma omp for schedule(static,32)
+#pragma omp for schedule(static,chunkSize)
 	for (j = 0; j < numNodes; j++) {
 		node = graph->Nodes[j];
 		for (i = 0; i < length; i++) {
@@ -172,28 +178,26 @@ int PageRank(struct Graph *graph, int length, double d_ratio)
 		}
 	}
 }
-printf("Walking Complete\n");
-
+	graph->WalkTime = omp_get_wtime() - start;
+//	printf("Walking Complete\n");
+	start = omp_get_wtime();
 #pragma omp parallel private(i) shared(numNodes)
 {
-#pragma omp for schedule(static,32) reduction(+:sum)
+#pragma omp for schedule(static,chunkSize) reduction(+:sum)
 	for (i = 0; i < numNodes; i++) {
 		sum += graph->Nodes[i]->visited;
 	}
 
 }
 
-printf("Summing Complete %d\n", sum);
-int pr;
-#pragma omp parallel for schedule(static,32) private(i)
+//printf("Summing Complete %d\n", sum);
+#pragma omp parallel for schedule(static,chunkSize) private(i)
 	for (i = 0; i < numNodes; i++) {
-		pr = (graph->Nodes[i]->visited)/(sum - graph->Nodes[i]->visited);
-		graph->Nodes[i]->pagerank = pr;
-		if(pr > 0)
-			PrintNodeStat(graph->Nodes[i]);
+		graph->Nodes[i]->pagerank = (graph->Nodes[i]->visited)/(sum - graph->Nodes[i]->visited);
 	}
+	graph->EstimateTime = omp_get_wtime() - start;
 
-printf("PageRank Complete\n");
+//printf("PageRank Complete\n");
 
 return 0;
 }
@@ -211,10 +215,11 @@ int main(int argc, char* argv[])
 	}
 	K = atoi(argv[1]);
 	D = atof(argv[2]);
-	printf("Walk distance %d, damping ratio %lf\n", K, D);
+	//printf("Walk distance %d, damping ratio %lf\n", K, D);
 
 	//add all nodes graph and their respective refrences
 	InitGraph(g);
 	PageRank(g, K, D);
+	printf("Walk Time: %lf\nEstimation Time: %lf\n", g->WalkTime, g->EstimateTime);
 
 }
